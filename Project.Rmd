@@ -1,0 +1,103 @@
+---
+title: "Practical Machine Learning Course Project"
+output: html_document
+---
+
+##Overview
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website [here.](http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight Lifting Exercise Dataset).
+
+
+##Admin Issues
+The following are the libraries used for this assignment, as well as the seed set, for sake of reproducibility. In particular, the `randomForest` package is more straightforward to use, and `doParallel` allows for higher processing power, and hence lower runtimes.
+
+``` {r library, cache=TRUE, message=FALSE, warning=FALSE}
+library(Hmisc)
+library(caret)
+library(randomForest)
+library(foreach)
+library(doParallel)
+set.seed(123)
+```
+
+
+##Downloading and reading in data
+
+Downloading both datasets from the respective URLs, the test dataset in this case contains the 20 observations to be used for submission later.
+
+``` {r readdata, cache=TRUE, message=FALSE}
+train.url    <- 'http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+test.url  <- 'http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+download.file(train.url, "train.csv")
+download.file(test.url, "test.csv")
+```
+
+Removing errorneous and missing entries from the datasets, as well as remove columns which are unused for model building and prediction.
+
+``` {r processdata, cache=TRUE, message=FALSE}
+training.df   <-read.csv("train.csv", na.strings=c("NA","#DIV/0!", ""))
+test.df <-read.csv("test.csv" , na.strings=c("NA", "#DIV/0!", ""))
+training.df<-training.df[,colSums(is.na(training.df)) == 0]
+test.df <-test.df[,colSums(is.na(test.df)) == 0]
+#Removal of un-used columns
+training.df   <-training.df[,-c(1:7)]
+test.df <-test.df[,-c(1:7)]
+```
+
+
+##Creating training and test dataset
+
+Splitting the dataset, using 75% for training and 25% for test, as well as identifying the `classe` variable as the outcome variable.
+
+``` {r split, cache=TRUE,message=FALSE}
+inTrain    <- createDataPartition(training.df$classe, p = 0.75, list = FALSE)
+training.data <- training.df[inTrain, ]
+test.data  <- training.df[-inTrain, ]
+#Outcome and predictor variables.
+y <- training.data$classe
+predictors <- training.data[-ncol(training.data)]
+```
+
+
+##Building of model using random forest
+
+Building a random forest model with 800 trees, and using the `doParallel` package here to run on 4 cores.
+
+``` {r model, cache=TRUE,message=FALSE}
+registerDoParallel()
+model.rf <- foreach(ntree=rep(200, 4), .combine=randomForest::combine, .packages='randomForest') %dopar% {
+    randomForest(predictors, y, ntree=ntree)}
+```
+
+
+##Checking accuracy on both training and test datasets
+
+``` {r pred, cache=TRUE, message=FALSE}
+train.pred <- predict(model.rf, newdata=training.data)
+confusionMatrix(train.pred,training.data$classe)
+
+test.pred <- predict(model.rf, newdata=test.data)
+confusionMatrix(test.pred,test.data$classe)
+```
+
+For this specific model, the prediction accuracy on the test data set is 99.5%, which is very close to 1. Since the model is performing well, I will proceed to use this on the 20 observations in the evaluation dataset.
+
+
+##Answer submission script
+
+Following the instructions giving on Coursera, the model is applied on the test dataset to evaluate its performance on 20 new observations. Output is 20 files, each containing the predicted `classe` outcome.
+
+``` {r submission, cache=TRUE, message=FALSE}
+pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+        filename = paste0("problem_id_",i,".txt")
+        write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+    }
+}
+
+colUsed <- colnames(training.df[colSums(is.na(training.df)) == 0])[-(1:7)]
+answer.data <- test.data[colUsed[colUsed!='classe']]
+answers<- predict(model.rf,newdata=test.df)
+
+pml_write_files(answers)
+```
